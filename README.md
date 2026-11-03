@@ -32,7 +32,9 @@
 ![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
 ![Zod](https://img.shields.io/badge/Zod-3E67B1?style=for-the-badge&logo=zod&logoColor=white)
 ![Kakao](https://img.shields.io/badge/Kakao%20Local%20API-FFCD00?style=for-the-badge&logo=kakao&logoColor=black)
-![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white)
+
+> 로그인/여행 일정 저장에 쓰이는 Supabase 연동은 팀원이 구현한 영역이라 본인이
+> 담당한 이미지 분석·추천 파이프라인에서는 사용하지 않아 기술 스택에서 제외했다.
 
 ## 아키텍처 / 요청 흐름
 
