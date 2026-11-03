@@ -1,219 +1,112 @@
-# PicTrip
+# PicTrip — 사진 기반 여행지 추천 서비스
 
-사진 한 장에서 여행지를 찾고, AI로 국내 여행 일정을 생성하는 웹 서비스입니다.
+부트캠프 1차 프로젝트로 3인 팀이 함께 만든 서비스입니다. 사용자가 사진 한 장을 올리면 AI가 촬영 장소/분위기를 추정하고, 그에 맞는 국내 여행지를 추천합니다.
 
-PicTrip은 사용자가 장소명을 정확히 몰라도 여행 사진이나 분위기 이미지를 업로드하면 AI가 위치 또는 분위기를 분석하고, 실제 지도에서 검색 가능한 국내 여행지를 추천합니다. 추천 장소를 선택하면 기간, 인원, 예산, 출발지 같은 조건을 바탕으로 Day별 여행 일정과 카카오맵 기반 동선을 생성합니다.
+이 문서는 팀원 중 **sangmin**이 담당한 "이미지 분석 → AI 추천" 파이프라인을 중심으로 정리했습니다.
 
-## 주요 기능
+## 담당 역할 (sangmin — 이미지 기반 여행지 추천 기능)
 
-| 기능 | 설명 |
-| --- | --- |
-| 이미지 위치 분석 | 업로드한 사진에서 촬영 장소를 추정하고, 사용자 힌트와 모순되는 경우 선택 UI로 보정합니다. |
-| 이미지 분위기 분석 | 색감, 지형, 날씨, 분위기를 분석해 비슷한 국내 여행지를 추천합니다. |
-| 실제 장소 검증 | AI 추천 장소를 Kakao Local API로 검증해 지도 검색 가능한 장소만 노출합니다. |
-| AI 일정 생성 | 키워드, 목적지, 출발지, 기간, 인원, 예산, 추가 요청을 기반으로 Day별 일정을 생성합니다. |
-| 진행 상태 스트리밍 | 일정 생성 중 분석, 동선 구성, 장소 검증, 마무리 단계를 NDJSON 스트림으로 표시합니다. |
-| 지도 기반 결과 화면 | 카카오맵 마커, 날짜별 탭, 타임라인, 추천 이유, 여행 팁을 함께 보여줍니다. |
-| 일정 편집 | 결과 화면에서 장소 검색, 추가, 수정, 삭제, 순서 변경을 지원합니다. |
-| 일정 저장 | 로그인 사용자는 생성한 일정을 Supabase `trips` 테이블에 저장하고 마이페이지에서 다시 열 수 있습니다. |
-| 인증 | Supabase 이메일 로그인과 별도 Kakao OAuth 플로우를 지원합니다. |
+- 사진 업로드 → Gemini 이미지 분석 → Groq 기반 여행지 추천으로 이어지는 API 전체 구현 (`server/controllers/imageAnalyzeController.js`, `server/routes/imageAnalyzeRoutes.js`)
+- Groq 호출 실패 시 다른 모델로 자동 전환되는 fallback 로직 작성
+- 카카오 로컬 API를 이용해 AI가 지어낸(실존하지 않는) 장소를 걸러내는 1차 검증 로직 작성 (`server/ai/kakaoLocalClient.js`)
+- 이미지-사용자 힌트가 모순될 때 사용자가 직접 선택하게 만드는 UX/서버 로직 설계
+- 클라이언트 이미지 압축, 타임아웃 처리, AI 응답 JSON 파싱 안정화
 
 ## 기술 스택
 
-| 영역 | 기술 |
-| --- | --- |
-| Frontend | HTML, CSS, Vanilla JavaScript ES Modules |
-| Backend | Node.js, Express |
-| AI / LLM | Google Gemini, Groq, NVIDIA NIM, LangChain |
-| Image Analysis | Gemini multimodal, LangChain structured output |
-| Map / Place | Kakao Maps SDK, Kakao Local API, Google Places API |
-| Auth / DB | Supabase Auth, Supabase PostgreSQL |
-| Deploy | Render Web Service |
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)
+![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)
+![Google Gemini](https://img.shields.io/badge/Gemini-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white)
+![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
+![Zod](https://img.shields.io/badge/Zod-3E67B1?style=for-the-badge&logo=zod&logoColor=white)
+![Kakao](https://img.shields.io/badge/Kakao%20Local%20API-FFCD00?style=for-the-badge&logo=kakao&logoColor=black)
+![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white)
 
-## 프로젝트 구조
+## 아키텍처 / 요청 흐름
 
-```text
-.
-├── api/
-│   └── index.js                    # Vercel 배포 실험용 진입점, server/app.js 재사용
-├── public/                         # 정적 프론트엔드
-│   ├── index.html                  # 메인 페이지
-│   ├── pages/                      # 로그인, 이미지 분석, 일정 생성/결과, 마이페이지
-│   ├── css/                        # 페이지별 스타일과 공용 디자인 토큰
-│   └── js/
-│       ├── auth/                   # 로그인, 회원가입, Kakao 가입 완료
-│       ├── common/                 # API 요청, 로그인 가드
-│       ├── components/             # 헤더, 푸터
-│       └── pages/                  # 페이지별 화면 로직
-├── server/
-│   ├── app.js                      # Express 앱 진입점
-│   ├── ai/                         # AI 호출, 프롬프트, 장소 검증, mock 일정
-│   ├── config/                     # Supabase client/admin
-│   ├── controllers/                # 요청 처리 로직
-│   ├── routes/                     # API 라우터
-│   └── utils/                      # Kakao OAuth, OAuth state cache
-├── DESIGN.md                       # 디자인 가이드
-├── AGENT.md                        # AI 에이전트 명세
-├── package.json
-└── vercel.json
+```mermaid
+flowchart TD
+    A[사진 업로드] --> B[클라이언트: Canvas로 리사이즈/압축<br/>최대 1200px, JPEG 0.7]
+    B --> C[Gemini 1단계: 이미지만 보고<br/>여행 사진 여부 + 위치 추정]
+    C -->|여행 사진 아님| X[에러 응답: INVALID_IMAGE_TYPE]
+    C -->|사용자 힌트 있음| D[Groq 2단계: 이미지 분석 결과 vs<br/>사용자 힌트 모순 검증]
+    C -->|힌트 없음| F
+    D -->|모순 발생| Y[needsUserChoice 응답<br/>사용자가 이미지 추정값/힌트 중 선택]
+    D -->|일치/허용| F[최종 위치 확정]
+    F --> G[Groq: 위치 기반 여행지 7곳 추천<br/>구조화 출력]
+    G --> H[카카오 로컬 API로 실존 여부 검증]
+    H --> I[검증 통과한 3곳만 응답]
 ```
+
+## 핵심 구현 내용
+
+### 1. Gemini → Groq 2단계 추천 파이프라인
+
+`analyzeAndVerifyLocation` 함수(`server/controllers/imageAnalyzeController.js`)가 핵심입니다.
+
+- **1단계 (Gemini, `gemini-3.1-flash-lite`)**: 이미지만 보고 `is_travel_image`(여행 사진 여부), `sido`/`sigungu`/`spot_name`, `confidence`를 Zod 스키마(`StructuredOutputParser`)로 강제해 JSON으로 받습니다. 여행 사진이 아니면 바로 `INVALID_IMAGE_TYPE`으로 거릅니다.
+- **2단계 (Groq)**: 사용자가 힌트 텍스트를 입력한 경우에만 실행됩니다. "이미지 분석 결과"와 "사용자 힌트"를 함께 주고, 둘이 확정적으로 모순되는지만 판단하게 했습니다. 프롬프트에 "사용자가 의문문을 쓰거나 모호한 단서만 준 경우에는 모순이 아니다"라는 규칙을 명시해, 힌트 때문에 이미지 기반 결과가 엉뚱하게 바뀌는 것을 막았습니다.
+- 추천 단계(`recommendTravelPlace`)는 확정된 위치를 받아 Groq에 7곳을 추천받고, `withStructuredOutput(recommendationSchema)`로 `{ name, region, reason }` 배열을 강제합니다.
+
+### 2. Groq 호출 실패 시 자동 모델 대체(fallback)
+
+Groq API가 간헐적으로 실패하는 문제를 해결하기 위해, 검증 단계와 추천 단계 모두 동일한 패턴을 사용합니다.
+
+```js
+try {
+  // 1차 시도: Llama 3.3 (llama-3.3-70b-versatile)
+  step2Response = await withTimeout(groq.invoke([...]), 20000);
+} catch (groqError) {
+  console.warn("⚠️ Groq Llama 호출 실패, gpt-oss-120b로 fallback 진행:", groqError.message);
+  try {
+    // 2차 시도 (Fallback): GPT-OSS-120B (openai/gpt-oss-120b)
+    step2Response = await withTimeout(groqFallback.invoke([...]), 20000);
+  } catch (fallbackError) {
+    throw fallbackError;
+  }
+}
+```
+
+- 1차 모델(`llama-3.3-70b-versatile`)이 타임아웃(20초)이나 에러로 실패하면, 2차 모델(`openai/gpt-oss-120b`)로 즉시 재시도합니다.
+- 추천 단계(`recommendTravelPlace`)에서도 동일하게 fallback하고, 두 모델이 모두 실패하면 `fallbackRecommendation`(대한민국 기본 추천)으로 안전하게 대체합니다.
+- 위치 분석 자체도 결과가 불확실하면(`findLocation`) 최대 3회까지 재시도하면서, 재시도마다 "지형/건축물/식생/기후 단서를 더 보수적으로 판단하라"는 보강 힌트를 프롬프트에 누적해 넣습니다.
+
+### 3. 카카오 로컬 API를 이용한 "AI가 지어낸 장소" 문제 해결
+
+LLM이 그럴듯하지만 실존하지 않는 장소명을 만들어내는 환각(hallucination) 문제가 있었습니다(`fix: 추천 여행지 환각 현상 해결`, `fix: 환각현상 추가수정 및 카카오 로컬 검증 메서드 작성` 커밋). 이를 2단계로 완화했습니다.
+
+- **프롬프트 레벨**: `buildLocationRecommendPrompt`에 "지도 앱에 검색 가능한 실제 상호명만 사용", "명칭을 임의로 축약하지 말 것(반월호 → 반월호수)", "공공 행정기관 제외" 등 세부 규칙과 출력 전 자가검증 체크리스트를 명시했습니다.
+- **코드 레벨 검증 (`verifyPlaceWithKakao`, `server/ai/kakaoLocalClient.js`)**: Groq가 추천한 장소명을 카카오 로컬 API(`keyword.json`)로 실제 검색해, 장소명이 포함 관계로 일치하고 추천한 행정구역과 주소가 맞는 경우에만 통과시킵니다. 검증을 통과한 장소가 3곳이 모일 때까지만 순회하며(`getVerifiedRecommendation`), 통과하지 못한 장소는 최종 응답에서 제외됩니다.
+
+### 4. 이미지-힌트 모순 시 사용자 선택 UX
+
+이미지 분석 결과와 사용자가 입력한 텍스트 힌트가 서로 다른 장소를 가리킬 때, 서버가 일방적으로 한쪽을 선택하지 않고 `needsUserChoice: true`와 함께 "이미지 기반 추정값"과 "힌트 기반 추정값"을 함께 내려줍니다. 프론트(`image-location-analyze.js`)는 이를 받아 사용자가 둘 중 하나를 고르는 UI를 띄우고, 선택 결과를 `/confirm-location`으로 다시 보내 추천을 이어갑니다.
+
+### 5. 클라이언트 이미지 압축 / 응답 안정화
+
+- 업로드 즉시 Canvas로 긴 변 1200px, JPEG 품질 0.7로 리사이즈해 base64 페이로드 크기와 Gemini 응답 시간을 줄였습니다.
+- 모든 AI 호출에 20초 타임아웃(`withTimeout`)을 걸어 응답이 없을 때 무한 대기하지 않도록 했습니다.
+- `extractJson`으로 코드블록(```json```)이나 잡텍스트가 섞인 LLM 응답에서 JSON 부분만 추출하고, 파싱 실패 시에도 기본값으로 안전하게 대체(graceful fallback)해 요청 전체가 실패하지 않도록 했습니다.
+
+## 트러블슈팅
+
+커밋 이력 기준으로 실제 겪은 문제와 해결 과정입니다.
+
+- **추천 장소 환각 문제**: Groq가 실존하지 않거나 미사여구로 꾸민 장소를 추천 → 프롬프트에 금지 규칙/자가검증 체크리스트 추가 + 카카오 로컬 API로 실존 여부를 재검증하는 로직을 별도로 작성 (`d370027`, `84ed011`).
+- **AI 추천 장소명과 카카오맵 검색 결과 불일치**: 공식 명칭 축약(예: "반월호" → "반월호수")으로 카카오 지도 검색이 실패하는 사례 발생 → 프롬프트에 정식 풀네임 사용 규칙과 축약 금지 예시를 명시 (`5f9c960`).
+- **타임아웃 및 AI JSON 응답 파싱 실패**: LLM이 JSON 외의 텍스트를 섞어 반환하거나 응답이 지연되는 문제 → `withTimeout`으로 20초 제한, `extractJson`으로 코드블록/잡텍스트에서 JSON만 추출하도록 개선 (`a65b246`).
+- **위치기반 분석 AI 신뢰도 버그**: 이미지 분석 결과의 confidence가 낮아도 그대로 확정해버리는 문제 → `findLocation`에서 결과가 불확실하면 최대 3회까지 재분석하며 프롬프트에 보수적 판단 힌트를 누적 (`901d9e9`).
+- **Groq 단일 모델 의존 시 호출 실패**: Groq API가 간헐적으로 실패 → `llama-3.3-70b-versatile` 실패 시 `openai/gpt-oss-120b`로 자동 전환하는 fallback 추가 (`348a5b0`).
+- **이미지-힌트 모순을 서버가 임의로 판단하는 문제**: 사용자가 애매한 힌트를 줬을 때 서버가 한쪽으로 단정해 오답을 주는 경우 발생 → 모순이 확정적일 때만 선택 UI를 띄우고, 애매한 경우(의문문, 포괄적 단서)는 이미지 분석 결과를 우선하도록 프롬프트 규칙을 구체화 (`a504a6d`).
 
 ## 실행 방법
 
-### 로컬 실행
-
 ```bash
 npm install
-cp .env.example .env
-npm run dev
-```
-
-브라우저에서 `http://localhost:3000`으로 접속합니다.
-
-운영 실행은 다음 명령을 사용합니다.
-
-```bash
+npm run dev   # nodemon으로 server/app.js 실행
+# 또는
 npm start
 ```
 
-### Render 실행 설정
-
-Render에서는 Express 서버를 그대로 Web Service로 실행합니다.
-
-| 항목 | 값 |
-| --- | --- |
-| Service Type | `Web Service` |
-| Runtime | `Node` |
-| Build Command | `npm install` |
-| Start Command | `npm start` |
-| Root Directory | repository root |
-
-Render가 `PORT` 환경 변수를 자동으로 주입하므로 별도로 고정 포트를 설정하지 않아도 됩니다. 배포 후 발급된 Render 도메인을 Supabase와 Kakao Developers 설정에도 함께 등록해야 로그인과 지도 기능이 정상 동작합니다.
-
-## 환경 변수
-
-`.env.example`을 기준으로 `.env`를 구성합니다.
-
-| 변수 | 설명 | 필수 |
-| --- | --- | --- |
-| `DEFAULT_PROVIDER` | 일정 생성 기본 provider. 기본값은 `gemini`입니다. | 선택 |
-| `GEMINI_API_KEY` | Gemini 일정 생성 및 이미지 분석 키 | 필수 |
-| `GEMINI_MODEL` | Gemini 일정 생성 모델명 | 선택 |
-| `GROQ_API_KEY` | Groq 기반 장소 추천, 힌트 검증, provider 선택 시 일정 생성에 사용 | 선택 |
-| `GROQ_MODEL` | Groq 일정 생성 모델명 | 선택 |
-| `NIM_API_KEY` | NVIDIA NIM provider 사용 시 필요 | 선택 |
-| `NIM_BASE_URL` | NIM OpenAI-compatible API base URL | 선택 |
-| `NIM_MODEL` | NIM 모델명 | 선택 |
-| `ENABLE_MOCK_FALLBACK` | AI 호출 실패 시 예시 일정 반환 여부 | 선택 |
-| `ENABLE_PLACE_VERIFY` | 일정 장소 검증 활성화 여부 | 선택 |
-| `SUPABASE_URL` | Supabase 프로젝트 URL | 필수 |
-| `SUPABASE_ANON_KEY` | Supabase anon key | 필수 |
-| `SUPABASE_SERVICE_ROLE_KEY` | Kakao 가입 완료 및 admin user 조회/생성에 사용 | Kakao OAuth 사용 시 필수 |
-| `KAKAO_REST_API_KEY` | Kakao Local API 장소 검색/검증 키 | 필수 |
-| `KAKAO_CLIENT_ID` | Kakao OAuth REST API 키 또는 client id | Kakao OAuth 사용 시 필수 |
-| `KAKAO_CLIENT_SECRET` | Kakao OAuth client secret | 선택 |
-| `KAKAO_REDIRECT_URI` | Kakao OAuth callback URL | Kakao OAuth 사용 시 필수 |
-| `GOOGLE_PLACES_API_KEY` | Kakao 검증 실패 시 Google Places 보조 검증에 사용 | 장소 검증 사용 시 권장 |
-| `PORT` | Express 서버 포트. 기본값은 `3000`입니다. | 선택 |
-
-참고: 카카오맵 JavaScript SDK 키는 현재 `public/pages/*` HTML의 SDK script URL에 직접 들어가 있습니다. 배포 환경이 바뀌면 Kakao Developers의 JavaScript 키 도메인 설정과 해당 script URL을 함께 확인해야 합니다.
-
-## API 엔드포인트
-
-### Auth: `/api/auth`
-
-| Method | Endpoint | 설명 |
-| --- | --- | --- |
-| `POST` | `/signup` | 이메일 회원가입 |
-| `POST` | `/login` | 이메일 로그인 |
-| `GET` | `/kakao/authorize` | Kakao OAuth 인가 페이지로 이동 |
-| `GET` | `/kakao/callback` | Kakao code 처리, 기존 사용자 세션 발급 또는 추가 가입 페이지 이동 |
-| `POST` | `/kakao/complete` | Kakao 신규 사용자의 이메일/비밀번호 입력 후 Supabase 계정 생성 |
-
-### Image Analyze: `/api`
-
-| Method | Endpoint | 설명 |
-| --- | --- | --- |
-| `POST` | `/find-location` | 이미지 기반 위치 추정 및 주변 추천지 3곳 반환 |
-| `POST` | `/confirm-location` | 사용자가 선택한 위치를 기준으로 추천지 재생성 |
-| `POST` | `/find-mood` | 이미지 분위기 분석 및 유사 추천지 3곳 반환 |
-
-### Itinerary: `/api/itineraries`
-
-| Method | Endpoint | 설명 |
-| --- | --- | --- |
-| `POST` | `/generate` | 일정 생성 후 JSON 응답 |
-| `POST` | `/generate-stream` | `application/x-ndjson` 스트림으로 진행 상태와 최종 일정을 반환 |
-
-### Trips: `/api/trips`
-
-모든 요청에 `Authorization: Bearer <access_token>` 헤더가 필요합니다.
-
-| Method | Endpoint | 설명 |
-| --- | --- | --- |
-| `GET` | `/` | 내 여행 일정 목록 조회 |
-| `GET` | `/:id` | 내 특정 여행 일정 조회 |
-| `POST` | `/` | 새 일정 저장 |
-| `PUT` | `/:id` | 기존 일정 제목, 조건, 결과 수정 |
-| `DELETE` | `/:id` | 일정 삭제 |
-
-## 사용자 흐름
-
-1. 메인 화면에서 사진 기반 추천 또는 직접 일정 생성을 선택합니다.
-2. 이미지 위치/분위기 분석 페이지에서 사진을 업로드하면 AI가 추천 여행지 3곳을 제공합니다.
-3. 추천지를 선택하면 일정 조건 입력 페이지로 이동하며 키워드와 목적지가 자동 반영됩니다.
-4. 조건을 제출하면 로딩 페이지에서 NDJSON 스트림으로 진행 상태를 표시합니다.
-5. 결과 페이지에서 지도, Day별 타임라인, 장소 상세 정보를 확인하고 필요한 항목을 편집합니다.
-6. 로그인 후 결과를 저장하면 마이페이지에서 다시 열고 수정할 수 있습니다.
-
-## Render 배포 메모
-
-이 프로젝트는 `server/app.js`를 직접 실행하는 Express 서버 구조입니다. 현재 배포 환경은 Render Web Service이며, `npm start`가 `node server/app.js`를 실행합니다.
-
-Render 무료 플랜을 사용하는 경우 일정 시간 요청이 없으면 인스턴스가 sleep 상태가 될 수 있고, 첫 요청에서 콜드 스타트 지연이 발생할 수 있습니다.
-
-`api/index.js`와 `vercel.json`은 Vercel 배포를 시도했던 설정 파일로 남아 있습니다. 현재 운영 기준은 Render입니다.
-
-배포 시 다음 외부 서비스 설정도 함께 맞춰야 합니다.
-
-| 서비스 | 확인 항목 |
-| --- | --- |
-| Supabase | Site URL, Redirect URLs에 Render 도메인 등록, `trips` 테이블 RLS, anon/service role key |
-| Kakao Developers | Web 플랫폼 도메인에 Render 도메인 등록, Redirect URI 갱신, JavaScript 키 허용 도메인 |
-| Google / Groq / NVIDIA | API key, 모델명, 과금/쿼터 |
-
-## 데이터 저장
-
-저장된 일정은 Supabase `trips` 테이블을 사용합니다. 서버 코드는 다음 필드를 기준으로 동작합니다.
-
-| 필드 | 용도 |
-| --- | --- |
-| `id` | 일정 id |
-| `user_id` | Supabase 사용자 id |
-| `title` | 일정 카드 제목 |
-| `payload` | 일정 생성 조건 |
-| `itinerary` | 생성 및 편집된 일정 JSON |
-| `created_at` | 생성일 |
-| `updated_at` | 수정일 |
-
-`/api/trips` 라우트는 Supabase 사용자 토큰으로 user client를 생성하고 `user_id` 조건을 함께 적용합니다. RLS 정책도 사용자 본인 데이터만 접근하도록 구성해야 합니다.
-
-## 구현상 주의사항
-
-- 프론트엔드는 `localStorage.session`에 Supabase 세션을 저장하고, 일정 생성 상태는 `sessionStorage`를 사용합니다.
-- 일정 생성 화면은 현재 provider 선택 없이 `gemini`를 기본 provider로 고정합니다.
-- `/generate-stream`은 브라우저 `ReadableStream`으로 줄 단위 JSON을 파싱합니다. EventSource 기반 SSE가 아닙니다.
-- `ENABLE_PLACE_VERIFY=true`일 때 일정 장소 검증은 Kakao Local API를 먼저 사용하고, 일부 케이스에서 Google Places를 보조로 사용합니다.
-- Kakao OAuth는 Supabase provider를 직접 쓰지 않고, 백엔드에서 Kakao 토큰 교환 후 Supabase admin API로 사용자를 생성하는 별도 플로우입니다.
-- `server/controllers/kakaoAuthController.js`의 Kakao 사용자 검색은 admin `listUsers` 페이지 조회를 사용합니다. 사용자가 많아지면 별도 매핑 테이블로 분리하는 것이 좋습니다.
-
-## 관련 문서
-
-- [DESIGN.md](./DESIGN.md)
-- [AGENT.md](./AGENT.md)
-
-## 라이선스 / 출처
-
-부트캠프 프로젝트: AIBE 7기 1차 Team 04
-
-외부 API 및 서비스: Google Gemini, Groq, NVIDIA NIM, Kakao Maps, Kakao Local, Google Places, Supabase
+`.env`에 `GOOGLE_API_KEY`(또는 `GEMINI_API_KEY`), `GROQ_API_KEY`, `KAKAO_REST_API_KEY`, Supabase 관련 키가 필요합니다.
