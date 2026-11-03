@@ -38,19 +38,7 @@
 
 ## 아키텍처 / 요청 흐름
 
-```mermaid
-flowchart TD
-    A[사진 업로드] --> B[클라이언트: Canvas로 리사이즈/압축<br/>최대 1200px, JPEG 0.7]
-    B --> C[Gemini 1단계: 이미지만 보고<br/>여행 사진 여부 + 위치 추정]
-    C -->|여행 사진 아님| X[에러 응답: INVALID_IMAGE_TYPE]
-    C -->|사용자 힌트 있음| D[Groq 2단계: 이미지 분석 결과 vs<br/>사용자 힌트 모순 검증]
-    C -->|힌트 없음| F
-    D -->|모순 발생| Y[needsUserChoice 응답<br/>사용자가 이미지 추정값/힌트 중 선택]
-    D -->|일치/허용| F[최종 위치 확정]
-    F --> G[Groq: 위치 기반 여행지 7곳 추천<br/>구조화 출력]
-    G --> H[카카오 로컬 API로 실존 여부 검증]
-    H --> I[검증 통과한 3곳만 응답]
-```
+![이미지 분석 → 추천 파이프라인](./docs/diagrams/pipeline.png)
 
 ## 핵심 구현 내용
 
@@ -96,17 +84,7 @@ try {
 
 LLM이 그럴듯하지만 실존하지 않는 장소명을 만들어내는 환각(hallucination) 문제가 있었습니다(`fix: 추천 여행지 환각 현상 해결`, `fix: 환각현상 추가수정 및 카카오 로컬 검증 메서드 작성` 커밋). 이를 2단계로 완화했습니다.
 
-```mermaid
-flowchart LR
-    A[Groq 추천 장소명] --> B[프롬프트 레벨: 실제 상호명·풀네임 강제]
-    B --> C[카카오 로컬 API keyword.json 검색]
-    C --> D{장소명·행정구역·주소 일치?}
-    D -- Yes --> E[통과 — 최종 후보에 포함]
-    D -- No --> F[제외]
-    E --> G{통과 3곳 모였는가?}
-    G -- No --> A
-    G -- Yes --> H[최종 3곳 응답]
-```
+![카카오 로컬 API 환각 방지 검증](./docs/diagrams/hallucination-prevention.png)
 
 | 레벨 | 내용 |
 | --- | --- |
